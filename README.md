@@ -1,10 +1,10 @@
-# TXQR Reader for iOS
+# TXQR Tester for iOS
 
-txqr-reader is a demo app in Swift that reads animated QR code and shows file.
+txqr-tester-ios is an app in Swift that automates testing of TXQR data transfer via QR codes.
 
-Currently it expects file to be an JPEG image.
+It expected to be used with [txqr-tester app](https://github.com/divan/txqr/cmd/txqr-tester).
 
-Just point camera to the animated QR sequence from TXQR apps, and see download progress and resulting file.
+Just run `txqr-tester` on your machine, make sure your phone is in the same WiFi network, place on tripod or fix it in other way and point camera to the QR code on the screen. Testing will begin immediately.
 
 # Demo
 
