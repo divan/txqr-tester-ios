@@ -1,13 +1,16 @@
 import UIKit
 import AVFoundation
 import QuickLook
-import Txqr
+import Txqrtester
 
 class QRScannerController: UIViewController {
     var captureSession = AVCaptureSession()
     var videoPreviewLayer: AVCaptureVideoPreviewLayer?
     var qrCodeFrameView: UIView?
-    var decoder = TxqrNewDecoder()
+    
+    var connector: TxqrtesterConnector = TxqrtesterNewConnector()
+    
+    var state: String = ""
 
     @IBOutlet var messageLabel:UILabel!
     @IBOutlet var topbar: UIView!    
@@ -66,30 +69,92 @@ class QRScannerController: UIViewController {
             return
         }
     }
-
-    var fileURL = URL(string: "") // we save downloaded file here, because QuickLook can only open from file
     
-    func ShowPreview(data: Data?) {
-        let quickLookController = QLPreviewController()
-        quickLookController.dataSource = self
+    var connState: Bool = false
+    var readyForNext: Bool = false
+    func processQR(_ str: String) {
+        let decoder = connector
         
+        // look for websocket connection QR code
+        if !connState && str.hasPrefix("ws://") {
+            print("got connection info \(str)!")
+            do {
+                try connector.connect(str)
+            } catch {
+                print("Failed to connect: \(error).")
+                return
+            }
+            connState = true
+            print("connected")
+            
+            return
+        }
+        
+        if !connState {
+            return
+        }
+        
+        // look for "nextRound" qr code
+        if !readyForNext && str == "nextRound" {
+            // restart decoder
+            print("got next round")
+            do {
+                try connector.startNext()
+            } catch {
+                print("Failed to send startNext: \(error).")
+                return
+            }
+            decoder.reset()
+            readyForNext = true
+            return
+        }
+        
+        if !readyForNext {
+            return
+        }
+        
+        // now, assume that we're getting encoded TXQR frames
         do {
-            // Get the documents directory
-            let documentsDirectoryURL = try! FileManager().url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            // Give the file a name and append it to the file path
-            fileURL = documentsDirectoryURL.appendingPathComponent("downloaded.jpeg")
-            // Write the pdf to disk
-            try data?.write(to: fileURL!, options: .atomic)
-            
-            // Make sure the file can be opened and then present the pdf
-            //if QLPreviewController.canPreview(fileURL as QLPreviewItem) {
-            quickLookController.currentPreviewItemIndex = 0
-            
-            present(quickLookController, animated: true, completion: nil)
-            //}
+            try decoder.decodeChunk(str)
         } catch {
-            print("Showing file: \(error).")
+            print("Decode chunk error: \(error).")
+        }
+        
+        let complete = decoder.isCompleted()
+        let progress = decoder.progress()
+        let speed = decoder.speed()
+        let readInterval = decoder.readInterval()
+        let totalTimeMs = decoder.totalTimeMs()
+        print("TotalTimeMS \(totalTimeMs)")
+        if totalTimeMs > 10000 { // timeout
+            // TODO send result
+            do {
+                try connector.sendResult(0)
+            } catch {
+                print("Failed to send result: \(error).")
+                return
+            }
+            messageLabel.text = String(format: "Timeout!")
+            readyForNext = false
+        }
+        
+        if complete {
+            let totalSize = decoder.totalSize()
+            let totalTime = decoder.totalTime()
             
+            messageLabel.text = String(format: "Read %@ in %@! Speed: %@", totalSize!, totalTime!, speed!)
+            
+            // TODO send result
+            do {
+                try connector.sendResult(totalTimeMs)
+            } catch {
+                print("Failed to send result: \(error).")
+                return
+            }
+            readyForNext = false
+            messageLabel.text = String(format: "Waiting for new QR scan")
+        } else {
+            messageLabel.text = String(format: "%02d%% [%@] (%dms)", progress, speed!, readInterval)
         }
     }
 }
@@ -99,11 +164,6 @@ extension QRScannerController: AVCaptureMetadataOutputObjectsDelegate {
         // Check if the metadataObjects array is not nil and it contains at least one object.
         if metadataObjects.count == 0 {
             qrCodeFrameView?.frame = CGRect.zero
-            return
-        }
-    
-        let complete = decoder?.isCompleted()
-        if complete! {
             return
         }
 
@@ -117,40 +177,8 @@ extension QRScannerController: AVCaptureMetadataOutputObjectsDelegate {
             
             if metadataObj.stringValue != nil {
                 let str = metadataObj.stringValue!;
-                do {
-                    try decoder?.decodeChunk(str)
-                } catch {
-                    print("Decode chunk error: \(error).")
-                }
-                
-                
-                let complete = decoder?.isCompleted()
-                let progress = decoder?.progress()
-                let speed = decoder?.speed()
-                let readInterval = decoder?.readInterval()
-                
-                if complete! {
-                    let totalSize = decoder?.totalSize()
-                    let totalTime = decoder?.totalTime()
-                    messageLabel.text = String(format: "Read %@ in %@! Speed: %@", totalSize!, totalTime!, speed!)
-                    let str = decoder?.data()
-                    let data = Data(base64Encoded: str!)
-                    
-                    ShowPreview(data: data)
-                } else {
-                    messageLabel.text = String(format: "%02d%% [%@] (%dms)", progress!, speed!, readInterval!)
-                }
+                processQR(str)
             }
         }
-    }
-}
-
-extension QRScannerController: QLPreviewControllerDataSource {
-    func numberOfPreviewItems(in controller: QLPreviewController) -> Int {
-        return 1
-    }
-    
-    func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
-        return fileURL! as QLPreviewItem
     }
 }

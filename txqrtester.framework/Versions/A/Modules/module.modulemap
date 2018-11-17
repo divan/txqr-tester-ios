@@ -1,0 +1,8 @@
+framework module "Txqrtester" {
+	header "ref.h"
+    header "Txqrtester.objc.h"
+    header "Universe.objc.h"
+    header "Txqrtester.h"
+
+    export *
+}
